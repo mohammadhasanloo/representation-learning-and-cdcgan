@@ -1,0 +1,22 @@
+[project]
+name = "representation-learning"
+version = "1.0.0"
+description = "Dimensionality reduction and generative models on CIFAR-10, compared under a shared KNN probe"
+requires-python = ">=3.10"
+dependencies = [
+    "keras>=3.0",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+    "tensorflow>=2.16",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["representation_learning*"]

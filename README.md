@@ -1,124 +1,132 @@
-# NN-CA6-1.Variational-Auto-Encoder-2.Conditional-Deep-Convolutional-GAN
+# Representation Learning on CIFAR-10
 
-### 1.Variational Auto Encoder [Link](#part-1-variational-auto-encoder)
+Four ways to compress a 32x32x3 image into a short vector, compared under one
+question: how separable are the classes once you get there? A KNN classifier is
+fitted on each representation, so a linear projection and a trained encoder are
+scored on equal terms. The repository also contains a conditional DCGAN that
+generates CIFAR-10 images from a class label.
 
-### 2.cGAN with BreastMNIST Dataset [Link](#part-2-conditional-deep-convolutional-gan)
+![Decoder output across a grid of interpolated latent codes](docs/vae_latent_grid.png)
 
-# Part 1: Variational Auto Encoder
+Each tile is the convolutional VAE's decoder applied to a point on a plane
+through latent space. The four corners are the codes of four real test images and
+everything between them is bilinearly interpolated. The output moves smoothly
+rather than jumping between images, which is what a well-behaved latent space
+looks like. The blur is characteristic of a VAE trained with a pixel-wise
+reconstruction loss.
 
-This report details the implementation of encoder-decoder networks based on the article titled "Empirical Comparison between Autoencoders and Traditional Dimensionality Reduction Methods" (link: [IEEE Xplore](https://ieeexplore.ieee.org/abstract/document/8791727)).
+## Requirements
 
-### 1. Dataset
+Python 3.10 or later. CIFAR-10 downloads automatically through Keras on first
+use.
 
-- Dataset Used: -10CIFAR
-- Student ID: Odd number
-- Preprocessing: Max-min normalization to the [0, 1] range
-- Data Reshape: One-dimensional arrays for compatibility with scikit-learn's dimensionality reduction algorithms
+## Installation
 
-#### 1.1 PCA and Isomap
+```bash
+pip install -e .
+```
 
-- Evaluation of KNN classifier accuracy after dimensionality reduction
-- Random search function for parameter optimization (dimensions and neighbors)
+With the test suite:
 
-##### Principal Component Analysis (PCA)
+```bash
+pip install -e ".[dev]"
+```
 
-- Dimensionality reduction while preserving information
-- Visualized top 10 principal components
-- Highest accuracy achieved: 41.5%
+## Usage
 
-##### Isomap
+Train a convolutional VAE:
 
-- Dimensionality reduction based on nearest neighbor distances
-- Retains data structure and distribution
-- Highest accuracy achieved: 27.10%
+```python
+from representation_learning import build_convolutional_vae, load_cifar10
 
-### 2. Encoder-Decoder Networks
+x_train, y_train, x_test, y_test = load_cifar10()
+encoder, decoder, vae = build_convolutional_vae(latent_dim=90)
+vae.compile(optimizer="adam")
+vae.fit(x_train, epochs=50, batch_size=128)
+```
 
-- Manually adjusted settings
-- Dense Autoencoder: Highest accuracy - 44.91%
-- Convolutional Autoencoder: Regularized with Batch Normalization
-- Dense models outperformed Convolutional models
+Score any representation with the shared probe:
 
-### 3. Variational Autoencoders (VAE)
+```python
+from representation_learning import knn_probe, pca_representation
+from representation_learning.data import flatten
 
-- Generative models combining deep learning and probabilistic modeling
-- Transform data into a lower-dimensional latent space
-- Reconstruction and posterior distribution learning
-- Loss function combines reconstruction error and KL divergence
+latent_train, latent_test = pca_representation(flatten(x_train), flatten(x_test), 19)
+print(knn_probe(latent_train, latent_test, y_train, y_test, n_neighbors=31))
+```
 
-#### VAE Latent Space
+Build the conditional GAN:
 
-- Dense VAE: Highest accuracy - 43.61%
-- Regularized with Batch Normalization
-- Final model with a latent space of 90
+```python
+from representation_learning import build_discriminator, build_generator
 
-### 4. Latent Space Visualization
+generator = build_generator(latent_dim=100)
+discriminator = build_discriminator()
+```
 
-- Scatter plots of training data in the latent space
-- Points tightly clustered, indicating successful VAE training
+## Results
 
-This report demonstrates the implementation and evaluation of encoder-decoder networks, providing insights into dimensionality reduction techniques and the effectiveness of Variational Autoencoders for feature extraction.
+Best configuration found for each method by sweeping latent size and neighbour
+count. Ten classes, so chance is 10%.
 
-# Part 2: Conditional-Deep-Convolutional-GAN
+| method | latent dim | k | KNN accuracy |
+| --- | --- | --- | --- |
+| Isomap | 23 | 51 | 27.1% |
+| PCA | 19 | 31 | 41.5% |
+| Variational autoencoder | 40 | 25 | 43.6% |
+| Autoencoder | 80 | 25 | 44.9% |
 
-In this part of the project, we implement the network structure by referencing the article titled "Conditional Generative Adversarial Nets" ([Link](https://arxiv.org/pdf/1411.1784.pdf)).
+Two things stand out. The learned encoders beat PCA, but by about three points,
+and the autoencoder needs four times the latent width to find them: most of what
+makes CIFAR-10 separable under KNN is already reachable with a linear projection.
+And Isomap does worse than PCA despite being far more expensive, because its
+neighbourhood graph is built in raw pixel space where distances between CIFAR-10
+images carry little semantic signal.
 
-### Data Preprocessing and Augmentation
+The VAE trails the plain autoencoder, which is expected. The KL term pulls the
+posterior toward a standard normal, and that regularisation costs some of the
+class structure a KNN probe measures. What it buys is the smooth, samplable
+latent space in the figure above, which the autoencoder has no guarantee of.
 
-Before diving into the details of the conditional DCGAN, let's briefly discuss data preprocessing and augmentation techniques applied to the dataset:
+## Conditional DCGAN
 
-- **RandomHorizontalFlip**: The input images are horizontally flipped with a 50% probability.
-- **RandomVerticalFlip**: The input images are vertically flipped with a 50% probability.
-- **RandomRotation**: Images are randomly rotated by a specified angle (15 degrees in our case).
-- **ColorJitter**: Random alterations in brightness, contrast, saturation, and hue are applied to the input images.
-- **RandomResizedCrop**: The initial image is randomly cropped to a size of 28x28 pixels with a random aspect ratio ranging from 0.8 to 1.
-- **ToTensor**: Images are converted to tensor format.
-- **Normalize**: Images are normalized with a mean of 0.5 and a standard deviation of 0.5 (for grayscale images).
+The generator embeds the class label and concatenates it with the noise vector.
+The discriminator embeds the label, broadcasts it to a full feature map, and
+stacks it on the image as an extra channel. That second part is what makes the
+setup conditional rather than a GAN with a label attached: the discriminator can
+reject an image that looks real but shows the wrong class.
 
-### Dataset and Network Architecture
+A test asserts this holds, since the same noise vector with two different labels
+must produce different images.
 
-We utilized the **BreastMNIST** dataset for this part and implemented the conditional DCGAN architecture as described in the paper. The network architecture is designed to adhere to the paper's specifications, including:
+## Project structure
 
-- Batch size of 128.
-- Stochastic Gradient Descent (SGD) optimizer.
-- Weight initialization with a normal distribution centered at zero and a standard deviation of 0.02.
-- LeakyReLU activation function with a slope of 0.2 for the discriminator.
-- Adam optimizer for both generator and discriminator.
-- Learning rate of 0.0002, as higher values were found to be suboptimal during experimentation.
-- Momentum of 0.5 in the Adam optimizer to stabilize training.
-- No data augmentation, only resizing to 64x64 and normalization to mean 0.5 and standard deviation 0.5.
+```
+representation_learning/
+    data.py           CIFAR-10 loading and normalisation
+    autoencoders.py   dense and convolutional autoencoders and VAEs
+    baselines.py      PCA, Isomap, and the shared KNN probe
+    cdcgan.py         conditional generator and discriminator
+tests/                shape and wiring tests for every model
+docs/                 figures referenced by this README
+pyproject.toml        dependencies
+```
 
-### Conditional DCGAN Implementation
+## Components
 
-The implementation of the conditional DCGAN was divided into two parts. In the first part, we trained the network for 600 epochs without performing optimization to ensure convergence. In the second part, we trained the network while following the optimization procedure mentioned in the paper.
+| module | responsibility |
+| --- | --- |
+| `data` | Loads CIFAR-10, normalises pixels, flattens images for vector methods |
+| `autoencoders` | Builds the four encoder architectures and the VAE training step |
+| `baselines` | PCA and Isomap projections, and the KNN probe every method is scored by |
+| `cdcgan` | Builds the conditional generator and discriminator |
 
-#### cGAN (Based on Keras)
+## Testing
 
-First, we loaded the dataset into numpy arrays, applied one-hot encoding to the labels, and resized the images to 28x28 pixels with a single channel. Then, we defined the architecture of the cGAN with specific hyperparameters:
+```bash
+python -m pytest tests/
+```
 
-- Learning rate set to 0.0003 for both generator and discriminator.
-- 1000 epochs of training.
-- Both generator and discriminator losses converged to approximately 0.7.
-
-#### Conditional DCGAN (Based on Paper)
-
-The conditional DCGAN architecture was implemented according to the paper's specifications, with the following key modifications:
-
-- Replaced all pooling layers with convolutional layers with strided convolutions.
-- Introduced batch normalization in both the generator and discriminator.
-- Removed fully connected layers from the architecture.
-- Used ReLU activation for generator layers except the output layer, which used tanh.
-- Employed LeakyReLU activation for all discriminator layers.
-- The generator progressively increased the number of features until reaching the desired number of channels (1 for grayscale images).
-
-### Training and Results
-
-Training the network for 600 epochs allowed both the generator and discriminator losses to converge, indicating successful learning. However, the generated images showed limited quality due to the relatively low number of epochs. It's important to note that even the original BreastMNISt dataset contains images that are challenging to distinguish, making it difficult for the generator to produce highly realistic images.
-
-As shown in the results, the network's accuracy improved during training, with training accuracy reaching 99%, validation accuracy around 68%, and test accuracy around 80%. These accuracy values suggest that the network might have encountered some degree of overfitting on the training data.
-
-### Loss Functions in GAN
-
-The loss functions for the discriminator and generator are critical in GANs. The discriminator's loss, typically based on Binary Cross-Entropy, measures how well it can distinguish between real and fake data. The generator's loss, also based on Binary Cross-Entropy, encourages the generator to produce data that the discriminator cannot easily differentiate from real data.
-
-Throughout the training process, the loss functions for both the discriminator and generator should be balanced to ensure stable and effective training.
+Ten tests. Every model is built and a small random batch pushed through it, so
+the architectures and tensor shapes are checked end to end. Nothing is trained,
+so the suite runs in seconds.
